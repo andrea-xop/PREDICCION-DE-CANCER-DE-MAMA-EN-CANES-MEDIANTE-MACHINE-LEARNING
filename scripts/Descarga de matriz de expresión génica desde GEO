@@ -1,0 +1,6 @@
+Descarga de la matriz de expresión génica desde el repositorio Gene Expression Omnibus (GSE119810):
+wget -O GSE119810_CMT_222S_FPKM.csv.gz \
+https://ftp.ncbi.nlm.nih.gov/geo/series/GSE119nnn/GSE119810/suppl/GSE119810_CMT_222S_FPKM.csv.gz
+
+Descompresión del archivo:
+gunzip GSE119810_CMT_222S_FPKM.csv.gz
