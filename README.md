@@ -27,7 +27,7 @@ El repositorio incluye el código empleado para:
 
 ## Estructura del repositorio
 - `scripts/`: código fuente en R y código de descarga inicial de datos de GEO.
-- `datos/`: datos empleados.
+- `datos/`: archivos de datos empleados durante el análisis cuya obtención no está automatizada en los scripts.
 
 ## Reproducibilidad
 
