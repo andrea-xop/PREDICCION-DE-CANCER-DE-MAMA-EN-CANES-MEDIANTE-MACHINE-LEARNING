@@ -26,8 +26,7 @@ El repositorio incluye el código empleado para:
 - Análisis de enriquecimiento funcional (Gene Ontology).
 
 ## Estructura del repositorio
-- `descarga inicial/`: código de descarga inicial de datos de GEO.
-- `scripts/`: código fuente en R.
+- `scripts/`: código fuente en R y código de descarga inicial de datos de GEO.
 - `datos/`: datos empleados.
 
 ## Reproducibilidad
