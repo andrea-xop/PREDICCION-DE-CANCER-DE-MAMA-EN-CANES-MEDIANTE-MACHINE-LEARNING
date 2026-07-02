@@ -21,7 +21,7 @@ El repositorio incluye el código empleado para:
 - Clustering jerárquico.
 - Entrenamiento y evaluación de modelos Random Forest.
 - Entrenamiento y evaluación de modelos XGBoost.
-- Regresión logística penalizada (LASSO/Elastic Net).
+- Regresión logística penalizada (LASSO).
 - Identificación de genes relevantes.
 - Análisis de enriquecimiento funcional (Gene Ontology).
 
@@ -40,4 +40,4 @@ Andrea Unzu Redín
 
 ## Licencia
 
-MIT (o la licencia que prefieras).
+MIT
