@@ -128,7 +128,6 @@ drop_vars <- c(grep("^characteristics_ch1", names(merged_data), value = TRUE))
 processed_data <- merged_data[, !(names(merged_data) %in% drop_vars)]
 processed_data
 names(processed_data)[1:54]
-write_xlsx(processed_data[,1:54], "pre_filtered_data.xlsx")
 ```
 
 
