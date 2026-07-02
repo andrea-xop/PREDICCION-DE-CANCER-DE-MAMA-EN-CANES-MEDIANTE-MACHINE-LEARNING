@@ -1151,7 +1151,7 @@ grid.newpage()
 grid.draw(venn.plot)
 ```
 
-### Anotación conjunta de la totalidad de genes seleccionados
+## Anotación conjunta de la totalidad de genes seleccionados
 ```{r}
 ##### Ejecutar varias veces hasta que funcione, a veces se cae ######
 # 1. ANOTACIÓN PRINCIPAL (ENSEMBL 2020)
