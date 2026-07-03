@@ -2,14 +2,14 @@
 
 Este repositorio contiene el código en R desarrollado para el Trabajo Fin de Máster (TFM) titulado:
 
-**"Predicción de cáncer de mama en canes mediante machine learning: un enfoque de la bioinformática aplicado al bienestar animal"**
+**"Predicción de cáncer de mama en canes mediante _machine learning_: un enfoque de la bioinformática aplicado al bienestar animal"**
 
 ## Objetivo
 
 El objetivo de este trabajo es analizar datos de expresión génica de cáncer mamario canino para:
 
-- Diferenciar tejido tumoral y no tumoral mediante modelos de aprendizaje automático.
-- Identificar genes con potencial como biomarcadores.
+- Diferenciar tejido tumoral y no tumoral mediante modelos de _machine learning_.
+- Identificar genes con mayor importancia predictiva.
 - Analizar los procesos biológicos asociados a la enfermedad mediante análisis de enriquecimiento funcional.
 
 ## Metodología
@@ -18,12 +18,12 @@ El repositorio incluye el código empleado para:
 
 - Preprocesamiento y normalización de los datos.
 - Análisis de Componentes Principales (PCA).
-- Clustering jerárquico.
+- _Clustering_ jerárquico.
+- Regresión logística penalizada (LASSO).
 - Entrenamiento y evaluación de modelos Random Forest.
 - Entrenamiento y evaluación de modelos XGBoost.
-- Regresión logística penalizada (LASSO).
 - Identificación de genes relevantes.
-- Análisis de enriquecimiento funcional (Gene Ontology).
+- Análisis de enriquecimiento funcional (Gene Ontology y KEGG).
 
 ## Estructura del repositorio
 - `scripts/`: código fuente en R y código de descarga inicial de datos de GEO.
