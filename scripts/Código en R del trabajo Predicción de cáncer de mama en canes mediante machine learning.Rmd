@@ -1,0 +1,1362 @@
+---
+title: "Codigo TFM"
+author: "Andrea Unzu Redín"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    default_style: "dark"
+    downcute_theme: "default"
+  html_document:
+---
+ 
+# Pasos iniciales
+## Carga de paquetes
+```{r}
+# Limpiamos el entorno de R para evitar conflictos con objetos previos
+rm(list=ls())
+```
+
+```{r}
+# Cargamos las librerías necesarias para nuestro análiis
+suppressPackageStartupMessages({
+  library(GEOquery)
+  library(tidyverse)
+  library(nFactors)
+  library(ggplot2)
+  library(writexl)
+  library(patchwork)
+  library(RColorBrewer)
+  library(randomForest)
+  library(httr)
+  library(jsonlite)
+  library(caret)
+  library(glmnet)
+  library(PRROC)
+  library(nFactors)
+  library(ggplot2)
+  library(xgboost)
+  library(VennDiagram)
+  library(grid)
+  library(biomaRt)
+  library(dplyr)
+  library(clusterProfiler)
+  library(org.Cf.eg.db)
+  library(readxl)
+  
+})
+setwd("C:/Users/andre/OneDrive/Escritorio/Andrea/Master/TFM/TrabajoenR/Datos")
+``` 
+
+```{r}
+# Generamos las citas de las librerías empleadas
+paquetes <- c(
+  "GEOquery",
+  "tidyverse","nFactors",
+  "ggplot2",
+  "writexl",
+  "patchwork",
+  "RColorBrewer",
+  "randomForest",
+  "httr",
+  "jsonlite",
+  "caret",
+  "glmnet",
+  "PRROC",
+  "xgboost",
+  "VennDiagram",
+  "grid",
+  "dplyr",
+  "biomaRt",
+  "clusterProfiler", 
+  "org.Cf.eg.db",
+  "readxl"
+)
+
+dir.create("citas", showWarnings = FALSE)
+for (pkg in paquetes) {
+  cat("Procesando:", pkg, "\n")
+  
+  tryCatch({
+    cita <- toBibtex(citation(pkg))
+    
+    writeLines(
+      cita,
+      file.path("citas", paste0(pkg, ".bib"))
+    )
+    
+  }, error = function(e) {
+    message("No se pudo obtener cita para: ", pkg)
+  })
+}
+cat("Listo. Archivos guardados en la carpeta 'citas'\n")
+```
+
+## Lectura de datos y union
+```{r Lectura datos}
+# Descargar y leer directamente desde GEO -- ARCHIVO CON VARIABLES CLINICAS
+gse <- getGEO("GSE119810", GSEMatrix = TRUE)
+gse
+phenoData <- pData(gse[[1]])  # Información de las muestras
+phenoData
+# Leer archivo FPKM -- ARCHIVO CON GENES DE EXPRESION
+setwd("C:/Users/andre/OneDrive/Escritorio/Andrea/MASTER/TFM/TrabajoenR/Datos")
+expr <- read.csv("GSE119810_CMT_222S_FPKM.csv", header = TRUE, row.names = 1)     
+colnames(expr) <- gsub("\\.", "-", colnames(expr))
+expr
+```
+```{r}
+expr_t <- as.data.frame(t(expr))
+expr_t$sample <- rownames(expr_t)
+phenoData$sample <- phenoData$title
+phenoData <- phenoData %>%  dplyr::select(-title)
+merged_data <- merge(phenoData, expr_t, by = "sample")
+head(merged_data)
+```
+
+
+## Preprocesamiento de datos
+### Visualización inicial y dimensiones del dataset
+```{r Visualizacion inicial}
+# Mostramos el número de filas y columnas
+cat(paste("El número de filas es", nrow(merged_data)))   
+cat(paste("\nEl número de columnas es", ncol(merged_data)))
+```
+### Eliminar columnas duplicadas
+```{r}
+drop_vars <- c(grep("^characteristics_ch1", names(merged_data), value = TRUE))
+processed_data <- merged_data[, !(names(merged_data) %in% drop_vars)]
+processed_data
+names(processed_data)[1:54]
+```
+
+
+### Seleccion y codificacion variables clinicas
+
+```{r}
+drop_vars <- c("sample",
+  "status", "submission_date", "last_update_date",
+  "type", "channel_count", "source_name_ch1",
+  "organism_ch1",
+  "molecule_ch1",
+  "extract_protocol_ch1", "extract_protocol_ch1.1",
+  "taxid_ch1",
+  "description",
+  grep("^data_processing", names(processed_data), value = TRUE),
+  "platform_id",
+  "contact_name", "contact_email", "contact_laboratory",
+  "contact_department", "contact_institute",
+  "contact_address", "contact_city", "contact_state",
+  "contact_zip/postal_code", "contact_country",
+  "data_row_count",
+  "instrument_model",
+  "library_selection", "library_source", "library_strategy",
+  "relation", "relation.1",
+  "supplementary_file_1"
+)
+
+filtered_data <- processed_data[, !(names(processed_data) %in% drop_vars)]
+rownames(filtered_data) <- filtered_data$geo_accession
+filtered_data$geo_accession <- NULL
+filtered_data
+```
+```{r}
+
+drop_ml_vars <- c("date of death:ch1",
+         "date of surgery:ch1",
+         "survival status (until 2018-08-01):ch1",
+  "diagnosis:ch1",
+  "tumor grade:ch1",
+  "survival (day):ch1",
+  "er allred score:ch1",
+  "her2 score (hercep test score):ch1",
+  "lymphatic vessel invasion:ch1",
+  "er status:ch1"
+)
+
+
+final_filtered_data <- filtered_data %>%
+  dplyr::select(-all_of(drop_ml_vars))
+final_filtered_data
+```
+```{r}
+
+ml_data <- final_filtered_data
+
+# Codificación de variable objetivo
+ml_data$cancer <- ifelse(grepl("mammary tumor tissue", ml_data$`tissue:ch1`),1, 0)
+# La eliminamos por ahora para evitar data leakage
+ml_data <- ml_data %>% dplyr::select(-`tissue:ch1`)
+
+# Elminamos id
+ml_data <- ml_data %>% dplyr::select(-`dog id:ch1`)
+
+####### Codificación de variables 
+ml_data[ml_data == "Not applicable"] <- -1
+# Edad (numérica)
+ml_data$age <- as.numeric(ml_data$`age:ch1`)
+ml_data <- ml_data %>% dplyr::select(-`age:ch1`)
+# Sexo (binaria)
+ml_data$sex <- ifelse(ml_data$`Sex:ch1` == "Female", 1, 0)
+ml_data <- ml_data %>% dplyr::select(-`Sex:ch1`)
+# Neuter status (binaria)
+ml_data$neutered <- ifelse(ml_data$`neuter status:ch1` == "Neutered",1, 0)
+ml_data <- ml_data %>% dplyr::select(-`neuter status:ch1`)
+# Breed (one -hot enconding)
+breed_dummies <- model.matrix(~ `breed:ch1` - 1, data = ml_data)
+ml_data <- cbind(ml_data %>% dplyr::select(-`breed:ch1`),breed_dummies)
+# Genes (expresión)
+gene_cols <- grep("^ENSCAFG", names(ml_data), value = TRUE)
+ml_data[gene_cols] <- lapply(ml_data[gene_cols], as.numeric)
+
+
+######## RESULTADO FINAL
+ml_data <- ml_data %>%dplyr::select(cancer,age,sex,neutered,starts_with("`breed:ch1`"),everything())
+dim(ml_data)
+ml_data
+```
+
+### Tratamiento de valores faltantes
+```{r Valores faltantes}
+numerical_data <- ml_data
+
+# Ver si existen valores NA en total
+sum(is.na(numerical_data) | numerical_data == "")
+cols_con_na <- colSums(is.na(numerical_data)| numerical_data == "") > 0
+names(cols_con_na[cols_con_na])
+
+# Comprobamos que ya no hay NA
+sum(is.na(numerical_data))
+```
+
+
+### Filtrado de variables sin variación
+
+```{r Filtrado de variables}
+# Eliminamos columnas que tienen todos los valores iguales a 0
+# Estas variables no aportan ninguna información al análisis
+is_constant <- sapply(numerical_data, function(x) length(unique(x)) == 1)
+numerical_data_filtered <- numerical_data[, !is_constant]
+
+
+# Eliminamos columnas cuya varianza es menor que un umbral (0.05)
+# Las variables con varianza muy baja apenas presentan variabilidad entre observaciones
+numerical_data_filtered_2 <- numerical_data_filtered[, apply(numerical_data_filtered, 2, var) > 0.05]
+
+# Comprobamos las dimensiones del dataset resultante
+dim(numerical_data)
+dim(numerical_data_filtered)
+dim(numerical_data_filtered_2)
+
+```
+
+
+### Aplicación de transformación y escalado
+
+```{r Transformacion}
+target <- numerical_data_filtered_2$cancer
+numerical_data_tmp <- numerical_data_filtered_2 %>% dplyr::select(-cancer)
+gene_cols <- grep("^ENSCAFG", names(numerical_data_tmp), value = TRUE)
+# Aplicamos log2(x + 1) para estabilizar valores muy altos
+numerical_data_tmp[gene_cols] <- log2(numerical_data_tmp[gene_cols] + 1)
+# Escalamos todos los datos para que cada columna tenga media 0 y desviación estándar 1
+numerical_data_norm <- as.data.frame(scale(numerical_data_tmp))
+# Vemos como quedaría el conjunto de datos final
+numerical_data_with_target <- numerical_data_norm
+numerical_data_with_target$cancer <- target
+numerical_data_with_target <- numerical_data_with_target %>%dplyr::select(cancer,everything())
+numerical_data_with_target
+```
+
+# Análisis exploratorio
+## Distribucion de clases
+```{r}
+ml_data$cancer_char <- ifelse(
+  ml_data$cancer == 1,
+  "Tumoral",
+  "No tumoral"
+)
+ml_data$neutered_char <- ifelse(
+  ml_data$neutered == 1,
+  "Esterilizado",
+  "No esterilizado"
+)
+table(ml_data$cancer_char)
+ggplot(
+  data.frame(cancer = ml_data$cancer_char),
+  aes(x = cancer, fill = cancer)
+) +
+  
+  geom_bar(
+    width = 0.6,
+    color = "black",
+    alpha = 0.9
+  ) +
+  
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    vjust = -0.4,
+    size = 5
+  ) +
+  
+  scale_fill_manual(values = c(
+    "Tumoral" = "#D95F5F",
+    "No tumoral" = "#5F8DD9"
+  )) +
+  
+  scale_y_continuous(
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+  
+  labs(
+    title = "Distribución de muestras",
+    subtitle = "Clasificación tumoral de las muestras caninas",
+    x = "Clase",
+    y = "Número de muestras",
+    fill = "Tipo de muestra"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 18,
+      hjust = 0.5
+    ),
+    
+    plot.subtitle = element_text(
+      size = 12,
+      hjust = 0.5,
+      color = "gray40"
+    ),
+    
+    axis.title = element_text(face = "bold"),
+    
+    legend.position = "none",
+    
+    panel.grid.major.x = element_blank(),
+    
+    panel.grid.minor = element_blank()
+  )
+```
+
+## Proporción de tejido tumoral según la edad
+```{r}
+prop.table(table(cut(ml_data$age, breaks = 21),
+  ml_data$cancer_char)
+  
+)
+ggplot(ml_data, aes(x = age, fill = cancer_char)) +
+  
+  geom_histogram(
+    bins = 21,
+    alpha = 0.8,
+    color = "black",
+    position = "fill"
+  ) +
+  
+  scale_fill_manual(values = c(
+    "Tumoral" = "#D95F5F",
+    "No tumoral" = "#5F8DD9"
+  )) +
+  
+  labs(
+    title = "Proporción de tejido tumoral según la edad",
+    subtitle = "Comparación entre muestras tumorales y no tumorales",
+    x = "Edad (años)",
+    y = "Proporción",
+    fill = "Clase",caption = "Nota: el valor -1 en edad corresponde a registros 'Not applicable' recodificados durante el preprocesamiento"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  
+  theme(
+    plot.title = element_text(face = "bold", size = 18, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, color = "gray40"),
+    axis.title = element_text(face = "bold"),
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+  plot.caption = element_text(hjust = 0, size = 10)
+  )
+```
+```{r}
+shapiro.test(ml_data$age[ml_data$cancer_char == "Tumoral"])
+shapiro.test(ml_data$age[ml_data$cancer_char == "No tumoral"])
+wilcox.test(age ~ cancer_char, data = ml_data)
+```
+
+
+## Proporción de tejido tumoral según el estado de castración
+```{r}
+p1 <- ggplot(ml_data, aes(x = neutered_char, fill = cancer_char)) +
+  
+  geom_bar(
+    position = "fill",
+    color = "black",
+    alpha = 0.85
+  ) +
+  
+  scale_fill_manual(values = c(
+    "Tumoral" = "#D95F5F",
+    "No tumoral" = "#5F8DD9"
+  )) +
+  
+  labs(
+    title = "Proporción de tejido tumoral según el estado de castración",
+    x = "Estado de castración",
+    y = "Proporción",
+    fill = "Clase"
+  ) +
+  
+  theme_minimal(base_size = 13) +
+  
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+
+p1
+```
+```{r}
+table(ml_data$neutered_char, ml_data$cancer_char)
+prop.table(table(ml_data$neutered_char, ml_data$cancer_char), margin = 1)
+table_neu <- table(ml_data$neutered_char, ml_data$cancer_char)
+chisq.test(table_neu)
+```
+
+
+## Proporción de tejido tumoral según la raza
+```{r}
+ml_data$breed <- final_filtered_data$`breed:ch1`
+ml_data$breed <- reorder(ml_data$breed, ml_data$cancer_char == "Tumoral", FUN = mean)
+ml_data <- ml_data %>%
+  group_by(breed) %>%
+  mutate(n_breed = n()) %>%
+  ungroup()
+ml_data$breed_label <- paste0(ml_data$breed, "  (n=", ml_data$n_breed, ")")
+
+p1 <- ggplot(ml_data, aes(x = reorder(breed_label, as.numeric(breed)), fill = cancer_char)) +
+  
+  geom_bar(
+    position = "fill",
+    color = "black",
+    alpha = 0.85
+  ) +
+  
+  scale_fill_manual(values = c(
+    "Tumoral" = "#D95F5F",
+    "No tumoral" = "#5F8DD9"
+  )) +
+  
+  labs(
+    title = "Proporción de tejido tumoral según la raza",
+    x = "Raza (número de muestras)",
+    y = "Proporción",
+    fill = "Clase"
+  ) +
+  
+  theme_minimal(base_size = 13) +
+  
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 7.5),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10),
+    legend.position = "top"
+  )
+
+p1
+```
+```{r}
+table(ml_data$breed, ml_data$cancer_char)
+prop.table(table(ml_data$breed, ml_data$cancer_char), margin = 1)
+table_breed <- table(ml_data$breed, ml_data$cancer_char)
+chisq.test(table_breed)
+```
+
+
+# Reduccion de dimensionalidad (PCA)
+```{r}
+
+pca <- prcomp(numerical_data_norm, scale. = FALSE)
+ev <- pca$sdev^2
+ns <- nScree(x = ev)
+ns
+
+# Seleccionar solo las primeras 20 componentes
+porcentaje <- (pca$sdev^2 / sum(pca$sdev^2)) * 100
+porcentaje_10 <- porcentaje[1:20]
+
+# Scree plot de las primeras 20
+barplot(porcentaje_10,
+        names.arg = 1:20,
+        col = brewer.pal(20, "Pastel1"),
+        main = "Varianza explicada por las primeras 20 componentes",
+        xlab = "Componente principal",
+        ylab = "% Varianza explicada",
+        border = "black")
+
+
+# Visualización PCA
+varianza.explicada <- pca$sdev^2 / sum(pca$sdev^2)
+pca_df <- data.frame(pca$x)
+pca_df$target <- as.factor(target)
+pca_df$target <- factor(pca_df$target,
+                        levels = c(0, 1),
+                        labels = c("No tumoral", "Tumoral"))
+ggplot(pca_df, aes(PC1, PC2, color = target)) +
+  geom_point(size = 2) +
+  labs(title = "PCA 2D - Primeras dos componentes principales") +
+  theme_minimal()
+```
+
+
+
+
+# Clustering
+```{r}
+# Clustering jerárquico
+dist_mat <- dist(numerical_data_norm)
+hc <- hclust(dist_mat, method = "ward.D2")
+plot(
+  hc,
+  labels = FALSE,
+  hang = -1,
+  main = "Dendrograma - Clustering jerárquico",
+  xlab = "Muestras",
+  ylab = "Distancia euclídea"
+)
+rect.hclust(hc, k = 2, border = "red")
+clusters <- cutree(hc, k = 2)
+table(clusters, target)
+```
+
+```{r}
+## Clustering k-means
+set.seed(123)
+kmeans_res <- kmeans(numerical_data_norm, centers = 2, nstart = 25)
+pca_df$cluster <- as.factor(kmeans_res$cluster)
+pca_df$target <- as.factor(pca_df$target)
+# Visualización
+p1 <- ggplot(pca_df, aes(PC1, PC2, color = target)) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(title = "PCA - Cáncer") +
+  theme_minimal()
+
+p2 <- ggplot(pca_df, aes(PC1, PC2, color = cluster)) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(title = "PCA - Clusters") +
+  theme_minimal()
+p1 + p2
+table(pca_df$cluster, target)
+```
+
+# Volcano plot exploratorio
+```{r}
+gene_cols <- grep("^ENSCAFG", names(numerical_data_norm), value = TRUE)
+gene_data <- numerical_data_norm[, gene_cols]
+# Log Fold Change (tumor vs normal)
+logFC <- colMeans(gene_data[target == 1, ]) -
+         colMeans(gene_data[target == 0, ])
+# p-values por gen
+pvals <- apply(gene_data, 2, function(gene){
+  t.test(gene ~ target)$p.value
+})
+# Ajuste por múltiples tests (FDR)
+padj <- p.adjust(pvals, method = "BH")
+# Data frame
+volcano_df <- data.frame(
+  gene = colnames(gene_data),
+  logFC = logFC,
+  pval = pvals,
+  padj = padj
+)
+# -log10(p ajustado)
+volcano_df$negLogP <- -log10(volcano_df$padj + 1e-10)
+
+
+#### Umbrales
+fc_cutoff <- 1.25
+fdr_cutoff <- 0.01
+y_cutoff <- -log10(fdr_cutoff)
+
+# Clasificación
+volcano_df$group <- "NS"
+
+volcano_df$group[
+  volcano_df$logFC > fc_cutoff &
+  volcano_df$padj < fdr_cutoff
+] <- "Up"
+
+volcano_df$group[
+  volcano_df$logFC < -fc_cutoff &
+  volcano_df$padj < fdr_cutoff
+] <- "Down"
+
+# Visualización
+ggplot(volcano_df, aes(x = logFC, y = negLogP)) +
+
+  # genes no significativos
+  geom_point(color = "grey80", alpha = 0.5) +
+
+  # genes sobreexpresados
+  geom_point(
+    data = subset(volcano_df, group == "Up"),
+    color = "#D95F5F",
+    alpha = 0.8
+  ) +
+
+  # genes infraexpresados
+  geom_point(
+    data = subset(volcano_df, group == "Down"),
+    color = "#5F8DD9",
+    alpha = 0.8
+  ) +
+
+  # líneas de corte
+  geom_vline(
+    xintercept = c(-fc_cutoff, fc_cutoff),
+    linetype = "dashed"
+  ) +
+
+  geom_hline(
+    yintercept = y_cutoff,
+    linetype = "dashed"
+  ) +
+
+  labs(
+    title = "Volcano plot exploratorio",
+    subtitle = "Genes diferencialmente expresados entre muestras tumorales y no tumorales",
+    x = "Log2 Fold Change",
+    y = "-log10(FDR)"
+  ) +
+
+  theme_minimal(base_size = 14) +
+
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title = element_text(face = "bold")
+  )
+```
+```{r}
+volcano_df$score <- abs(volcano_df$logFC) * volcano_df$negLogP
+top20volc <- volcano_df[order(-volcano_df$score), ][1:20, ]
+top20volc
+```
+
+## Anotación de genes de volcano plot
+```{r} 
+##### Realizamos anotación de genes de volcano (algunos no aparecen y se completan a mano) #####
+##### Ejecutar varias veces hasta que funcione, a veces se cae ######
+genes <- top20volc$gene
+
+url <- "https://rest.ensembl.org/lookup/id"
+res <- POST(
+  url,
+  add_headers(
+    "Content-Type" = "application/json",
+    "Accept" = "application/json" 
+  ),
+  body = toJSON(list(ids = genes), auto_unbox = TRUE)
+)
+
+stop_for_status(res)
+txt <- content(res, "text", encoding = "UTF-8")
+parsed <- fromJSON(txt, simplifyVector = FALSE)
+parsed_ordered <- parsed[genes]  # mantiene el orden original de genes
+
+# Luego convertir a df
+df <- do.call(rbind, lapply(parsed_ordered, function(x) {
+  if (is.null(x)) {
+    return(data.frame(
+      ensembl_gene_id = NA,
+      gene_name = NA,
+      description = NA,
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  data.frame(
+    ensembl_gene_id = x$id,
+    gene_name = x$display_name %||% NA,
+    description = x$description %||% NA,
+    stringsAsFactors = FALSE
+  )
+}))
+
+df$ensembl_gene_id <- rownames(df)
+df$order <- seq_len(nrow(df))
+
+df <- merge(df, top20volc, 
+            by.x = "ensembl_gene_id", 
+            by.y = "gene",
+            all.x = TRUE)
+# Restaurar orden original
+df <- df[order(df$order), ]
+# Quitar columna auxiliar
+df$order <- NULL
+df
+write_xlsx(df, "genes_volcano_anotados.xlsx")
+```
+
+
+# Modelado predictivo
+
+## División en entranamiento y test
+```{r}
+# Train/test split y normalización
+set.seed(123)
+unique_dogs <- unique(final_filtered_data$`dog id:ch1`)
+train_dogs <- sample(unique_dogs, size = 0.7 * length(unique_dogs))
+trainIndex <- final_filtered_data$`dog id:ch1` %in% train_dogs
+x_data <- numerical_data_tmp
+y_data <- factor(target,levels = c(0,1),labels = c("normal", "tumoral"))
+x_train_raw <- x_data[trainIndex, ]
+x_test_raw  <- x_data[!trainIndex, ]
+y_train <- y_data[trainIndex]
+y_test  <- y_data[!trainIndex]
+preproc <- preProcess( x_train_raw,method = c("center", "scale"))
+x_train <-  as.matrix(predict(preproc, x_train_raw))
+x_test  <-  as.matrix(predict(preproc, x_test_raw))
+
+# Dataset final
+train <- data.frame(target = y_train, x_train)
+test  <- data.frame(target = y_test, x_test)
+print(train)
+print(test)
+
+```
+
+
+## Modelo lineal interpretable con reguarización lasso
+```{r}
+set.seed(123)
+cv_model <- cv.glmnet(x_train, y_train,
+                      family = "binomial",
+                      alpha = 1)   # LASSO
+
+# Visualizar selección de lambda
+#plot(cv_model)
+
+# Mejor lambda
+best_lambda <- cv_model$lambda.min
+# Modelo
+lasso_model <- glmnet(x_train, y_train,
+                      family = "binomial",
+                      alpha = 1,
+                      lambda = best_lambda)
+
+# Clasificación final
+pred_prob <- drop(predict(cv_model,newx = x_test,s = "lambda.min",type = "response"))
+scores <- as.numeric(pred_prob)
+labels<- ifelse(y_test == "tumoral", 1, 0)
+pred_class <- ifelse(pred_prob > 0.5, "tumoral", "normal")
+
+# Matriz de confusión y resultados
+cm <- confusionMatrix(as.factor(pred_class), y_test, positive = "tumoral")
+tp <- cm$table[2,2]
+fp <- cm$table[1,2]
+fn <- cm$table[2,1]
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1 <- 2 * precision * recall / (precision + recall)
+cat("\n RESULTADOS MODELO FINAL REGRESIÓN LOGÍSTICA LASSO \n")
+print(cm)
+cat("\nF1-score:", round(f1, 4), "\n")
+
+# Curva precision recall
+pr <- pr.curve(
+  scores.class0 = scores[labels == 1],  # positivos (cáncer)
+  scores.class1 = scores[labels == 0],  # negativos (no cáncer)
+  curve = TRUE
+)
+plot(pr, main = "Precision-Recall Curve - LASSO")
+
+# Coeficientes (interpretabilidad)
+coeficientes <- coef(lasso_model)
+coef_df <- data.frame(
+  gene = rownames(coeficientes),
+  coef = as.numeric(coeficientes[,1])
+)
+
+# Eliminar intercepto y quedarme solo con no-cero
+coef_df <- coef_df %>%
+  filter(gene != "(Intercept)" & coef != 0)
+
+# Ver número de variables seleccionadas
+cat("Número de variables seleccionadas:", nrow(coef_df), "\n")
+
+# Top 20 más importantes
+top20lasso <- coef_df %>%
+  filter(gene != "(Intercept)") %>%
+  mutate(coef = as.numeric(coef)) %>%
+  arrange(desc(abs(coef))) %>%
+  slice_head(n = 20)
+top20lasso
+```
+
+
+
+### Anotación de genes de regresión logística LASSO
+```{r} 
+##### Realizamos anotación de genes de regresión logística LASSO (algunos no aparecen y se completan a mano) #####
+##### Ejecutar varias veces hasta que funcione, a veces se cae ######
+genes <- top20lasso$gene
+
+url <- "https://rest.ensembl.org/lookup/id"
+
+res <- POST(
+  url,
+  add_headers(
+    "Content-Type" = "application/json",
+    "Accept" = "application/json"   
+  ),
+  body = toJSON(list(ids = genes), auto_unbox = TRUE)
+)
+
+
+stop_for_status(res)
+txt <- content(res, "text", encoding = "UTF-8")
+parsed <- fromJSON(txt, simplifyVector = FALSE)
+parsed_ordered <- parsed[genes]  # mantiene el orden original de genes
+
+
+# Luego convertir a df
+df <- do.call(rbind, lapply(parsed_ordered, function(x) {
+  if (is.null(x)) {
+    return(data.frame(
+      ensembl_gene_id = NA,
+      gene_name = NA,
+      description = NA,
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  data.frame(
+    ensembl_gene_id = x$id,
+    gene_name = x$display_name %||% NA,
+    description = x$description %||% NA,
+    stringsAsFactors = FALSE
+  )
+}))
+df$ensembl_gene_id<- rownames(df)
+df$order <- seq_len(nrow(df))
+
+df <- merge(df, top20lasso, 
+            by.x = "ensembl_gene_id", 
+            by.y = "gene",
+            all.x = TRUE)
+# Restaurar orden original
+df <- df[order(df$order), ]
+# Quitar columna auxiliar
+df$order <- NULL
+df
+write_xlsx(df, "genes_lasso_anotados.xlsx")
+```
+
+## Random Forest
+```{r}
+# Control de entrenamiento
+set.seed(123)
+ctrl <- trainControl(method = "cv", number = 5, classProbs = TRUE, summaryFunction = twoClassSummary)
+rf_model <- train(target ~ ., data = train,method = "rf", trControl = ctrl)
+rf_model
+
+# Predicción
+rf_prob <- predict(rf_model, test, type = "prob")[, "tumoral"]
+scores_rf <- rf_prob
+labels_rf <- ifelse(test$target == "tumoral", 1, 0)
+
+
+# Clasificación final
+rf_class <- ifelse(rf_prob > 0.5, "tumoral", "normal")
+rf_class <- factor(rf_class, levels = c("normal", "tumoral"))
+
+# Matriz de confusión y resultados
+cm_rf <- confusionMatrix(rf_class, test$target, positive = "tumoral")
+tp <- cm_rf$table[2,2]
+fp <- cm_rf$table[1,2]
+fn <- cm_rf$table[2,1]
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_rf <- 2 * precision * recall / (precision + recall)
+cat("\n RANDOM FOREST - RESULTADOS FINALES \n")
+print(cm_rf)
+cat("\nF1-score:", round(f1_rf, 4), "\n")
+
+# Curva precision recall
+pr_rf <- pr.curve(
+  scores.class0 = scores_rf[labels_rf == 1],
+  scores.class1 = scores_rf[labels_rf == 0],
+  curve = TRUE
+)
+plot(pr_rf, main = "Precision-Recall Curve - RF")
+
+# Random Forest variables importantes
+varImp_rf <- varImp(rf_model)
+plot(varImp_rf, top = 20)
+top20rf <- varImp_rf$importance %>%
+  mutate(gene = rownames(.)) %>%
+  arrange(desc(Overall)) %>%   # normalmente la columna se llama "Overall"
+  dplyr::slice(1:20)
+top20rf
+
+```
+
+
+### Anotación de genes de Random Forest
+```{r}
+##### Realizamos anotación de genes de Random Forest (algunos no aparecen y se completan a mano) #####
+##### Ejecutar varias veces hasta que funcione, a veces se cae ######
+genes <- top20rf$gene
+
+url <- "https://rest.ensembl.org/lookup/id"
+res <- POST(
+  url,
+  add_headers(
+    "Content-Type" = "application/json",
+    "Accept" = "application/json"  
+  ),
+  body = toJSON(list(ids = genes), auto_unbox = TRUE)
+)
+
+stop_for_status(res)
+
+txt <- content(res, "text", encoding = "UTF-8")
+parsed <- fromJSON(txt, simplifyVector = FALSE)
+parsed_ordered <- parsed[genes]  # mantiene el orden original de genes
+
+
+# Luego convertir a df
+df <- do.call(rbind, lapply(parsed_ordered, function(x) {
+  if (is.null(x)) {
+    return(data.frame(
+      ensembl_gene_id = NA,
+      gene_name = NA,
+      description = NA,
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  data.frame(
+    ensembl_gene_id = x$id,
+    gene_name = x$display_name %||% NA,
+    description = x$description %||% NA,
+    stringsAsFactors = FALSE
+  )
+}))
+df
+df$ensembl_gene_id<- rownames(df)
+df$order <- seq_len(nrow(df))
+
+df <- merge(df, top20rf, 
+            by.x = "ensembl_gene_id", 
+            by.y = "gene",
+            all.x = TRUE)
+# Restaurar orden original
+df <- df[order(df$order), ]
+# Quitar columna auxiliar
+df$order <- NULL
+df
+write_xlsx(df, "genes_rf_anotados.xlsx")
+```
+
+## XGBOOST
+```{r}
+set.seed(123)
+# Entrenamiento
+xgb_model <- xgboost(data = x_train,label = y_train,nrounds = 50,objective = "binary:logistic",verbose = 0)
+
+# Predicción probabilística
+xgb_prob <- predict(xgb_model, x_test)
+scores_xgb <- xgb_prob
+labels_xgb <- ifelse(y_test == "tumoral", 1, 0)
+xgb_class <- ifelse(xgb_prob > 0.5, "tumoral", "normal")
+
+# Matriz de confusión y resultados
+cm_xgb <- confusionMatrix(as.factor(xgb_class), y_test, positive = "tumoral")
+tp <- cm_xgb$table[2,2]
+fp <- cm_xgb$table[1,2]
+fn <- cm_xgb$table[2,1]
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_xgb <- 2 * precision * recall / (precision + recall)
+cat("\n XGBOOST - RESULTADOS FINALES \n")
+print(cm_xgb)
+cat("\nF1-score:", round(f1_xgb, 4), "\n")
+
+# Precision-Recall Curve
+pr_xgb <- pr.curve(
+  scores.class0 = scores_xgb[labels_xgb == 1],  # positivos (tumoral)
+  scores.class1 = scores_xgb[labels_xgb == 0],  # negativos (normal)
+  curve = TRUE
+)
+plot(pr_xgb, main = "Precision-Recall Curve - XGBoost")
+
+# Importancia de variables
+importance_matrix <- xgb.importance(model = xgb_model)
+top20xgb <- importance_matrix %>% dplyr::slice(1:20)
+top20xgb
+xgb.plot.importance(importance_matrix[1:20, ])
+```
+
+
+
+### Anotación de genes de XGBoost
+```{r}
+##### Realizamos anotación de genes de XGBoost (algunos no aparecen y se completan a mano) #####
+##### Ejecutar varias veces hasta que funcione, a veces se cae ######
+genes <- top20xgb$Feature
+
+url <- "https://rest.ensembl.org/lookup/id"
+
+res <- POST(
+  url,
+  add_headers(
+    "Content-Type" = "application/json",
+    "Accept" = "application/json"  
+  ),
+  body = toJSON(list(ids = genes), auto_unbox = TRUE)
+)
+
+stop_for_status(res)
+
+txt <- content(res, "text", encoding = "UTF-8")
+parsed <- fromJSON(txt, simplifyVector = FALSE)
+parsed_ordered <- parsed[genes]  # mantiene el orden original de genes
+
+
+# Luego convertir a df
+df <- do.call(rbind, lapply(parsed_ordered, function(x) {
+  if (is.null(x)) {
+    return(data.frame(
+      ensembl_gene_id = NA,
+      gene_name = NA,
+      description = NA,
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  data.frame(
+    ensembl_gene_id = x$id,
+    gene_name = x$display_name %||% NA,
+    description = x$description %||% NA,
+    stringsAsFactors = FALSE
+  )
+}))
+df
+df$ensembl_gene_id<- rownames(df)
+df$order <- seq_len(nrow(df))
+
+df <- merge(df, top20xgb, 
+            by.x = "ensembl_gene_id", 
+            by.y = "Feature",
+            all.x = TRUE)
+# Restaurar orden original
+df <- df[order(df$order), ]
+# Quitar columna auxiliar
+df$order <- NULL
+df
+write_xlsx(df, "genes_xg_anotados.xlsx")
+```
+
+# Propuesta de biomarcadores
+```{r}
+# Unir todos los genes
+genes_lasso <- top20lasso$gene
+genes_rf    <- top20rf$gene
+genes_xgb   <- top20xgb$Feature
+genes_volc  <- top20volc$gene
+all_genes <- unique(c(genes_lasso, genes_rf, genes_xgb, genes_volc))
+
+# Presencia por metodo
+gene_table <- data.frame(
+  gene = all_genes,
+  LASSO = all_genes %in% genes_lasso,
+  RF = all_genes %in% genes_rf,
+  XGB = all_genes %in% genes_xgb,
+  VOLCANO = all_genes %in% genes_volc
+)
+
+# Score de consenso
+gene_table$score <- rowSums(gene_table[, c("LASSO", "RF", "XGB", "VOLCANO")])
+gene_table <- gene_table[order(-gene_table$score), ]
+consensus_table <- gene_table
+consensus_table
+
+# Diagrama de Venn
+venn.plot <- venn.diagram(
+  x = list(
+    LASSO = genes_lasso,
+    RF = genes_rf,
+    XGB = genes_xgb,
+    VOLCANO = genes_volc
+  ),
+  filename = NULL,
+  fill = c("red", "blue", "green", "orange"),
+  alpha = 0.5,
+  cex = 1.2,
+  cat.cex = 1.1
+)
+
+grid.newpage()
+grid.draw(venn.plot)
+```
+
+## Anotación conjunta de la totalidad de genes seleccionados
+```{r}
+##### Ejecutar varias veces hasta que funcione, a veces se cae ######
+# 1. ANOTACIÓN PRINCIPAL (ENSEMBL 2020)
+mart_2020 <- useMart(
+  biomart = "ENSEMBL_MART_ENSEMBL",
+  host = "https://nov2020.archive.ensembl.org"
+)
+
+mart_2020 <- useDataset(
+  dataset = "clfamiliaris_gene_ensembl",
+  mart = mart_2020
+)
+
+map_2020 <- getBM(
+  attributes = c(
+    "ensembl_gene_id",
+    "external_gene_name",
+    "description"
+  ),
+  filters = "ensembl_gene_id",
+  values = consensus_table$gene,
+  mart = mart_2020
+)
+
+df1 <- consensus_table %>%
+  left_join(map_2020, by = c("gene" = "ensembl_gene_id"))
+
+
+# 2. FALTANTES TRAS 2020 
+genes_na <- df1 %>%
+  filter(is.na(external_gene_name) | external_gene_name == "" | external_gene_name == "NA") %>%
+  pull(gene) %>%
+  unique()
+
+
+# 3. COMPLETAMOS CON ENSEMBL 2015 (LOS QUE SIGUEN EN NA) 
+df_2015 <- data.frame()
+
+if (length(genes_na) > 0) {
+
+  mart_2015 <- useMart(
+    biomart = "ENSEMBL_MART_ENSEMBL",
+    host = "https://may2015.archive.ensembl.org"
+  )
+
+  mart_2015 <- useDataset(
+    dataset = "cfamiliaris_gene_ensembl",
+    mart = mart_2015
+  )
+
+  map_2015 <- getBM(
+    attributes = c(
+      "ensembl_gene_id",
+      "external_gene_name",
+      "description"
+    ),
+    filters = "ensembl_gene_id",
+    values = genes_na,
+    mart = mart_2015
+  )
+
+  df_2015 <- map_2015
+}
+
+
+# 4. COMBINACIÓN 2020 + 2015
+
+df2 <- df1 %>%
+  left_join(df_2015,
+            by = c("gene" = "ensembl_gene_id"),
+            suffix = c("", "_2015")) %>%
+  mutate(
+    external_gene_name = coalesce(external_gene_name, external_gene_name_2015),
+    description = coalesce(description, description_2015)
+  ) %>%
+  dplyr::select(-external_gene_name_2015, -description_2015)
+
+
+######## 5. OTROS FALTANTES TRAS 2015 ########
+
+genes_na <- df2 %>%
+  filter(is.na(external_gene_name) | external_gene_name == "" | external_gene_name == "NA") %>%
+  pull(gene) %>%
+  unique()
+
+
+# 6. COMPLETAMOS CON ENSEMBL REST (SOLO LOS QUE SIGUEN EN NA)
+
+df_na <- data.frame()
+
+if (length(genes_na) > 0) {
+
+  url <- "https://rest.ensembl.org/lookup/id"
+
+  res <- POST(
+    url,
+    add_headers(
+      "Content-Type" = "application/json",
+      "Accept" = "application/json"
+    ),
+    body = toJSON(list(ids = genes_na), auto_unbox = TRUE)
+  )
+
+  stop_for_status(res)
+
+  txt <- content(res, "text", encoding = "UTF-8")
+  parsed <- fromJSON(txt, simplifyVector = FALSE)
+
+  parsed_ordered <- parsed[genes_na]
+
+  df_na <- do.call(rbind, lapply(parsed_ordered, function(x) {
+
+    if (is.null(x)) {
+      return(data.frame(
+        ensembl_gene_id = NA,
+        gene_name = NA,
+        description_gene = NA,
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    data.frame(
+      ensembl_gene_id = x$id,
+      gene_name = ifelse(is.null(x$display_name), NA, x$display_name),
+      description_gene = ifelse(is.null(x$description), NA, x$description),
+      stringsAsFactors = FALSE
+    )
+  }))
+}
+
+
+# 7. COMBINACIÓN FINAL
+consensus_table_final <- df2 %>%
+  left_join(
+    df_na %>%
+      dplyr::select(ensembl_gene_id, gene_name, description_gene),
+    by = c("gene" = "ensembl_gene_id")
+  ) %>%
+  mutate(
+    external_gene_name = coalesce(gene_name, external_gene_name),
+    description = coalesce(description_gene, description)
+  ) %>%
+  dplyr::select(-gene_name, -description_gene)
+
+
+# 8. EXPORTAMOS 
+write_xlsx(consensus_table_final, "genes_unificados_anotados.xlsx")
+consensus_table_final
+
+# Los pocos genes que seguían apareciendo como NA se completan a mano
+```
+
+
+## Enriquecimiento funcional
+```{r}
+# Extraemos Entrez id de los genes
+genes_df <- read_excel("genes_unificados_anotados_final.xlsx")
+genes <- genes_df$external_gene_name
+
+# 1. Mapeo con bitr (solo los encontrados)
+gene.df <- bitr(
+  genes,
+  fromType = "SYMBOL",
+  toType = "ENTREZID",
+  OrgDb = org.Cf.eg.db
+)
+
+# 2. Crear tabla base con TODOS los genes originales
+all_genes <- data.frame(SYMBOL = genes)
+
+# 3. Hacer LEFT JOIN para conservar todos
+gene.df_full <- all_genes %>%
+  left_join(gene.df, by = "SYMBOL")
+
+gene.df_full
+write_xlsx(gene.df_full, "genes_unificados_anotados_entrezid.xlsx")
+
+```
+
+```{r}
+# Genes sin correspondencia de Entrez id
+gene.df_full[is.na(gene.df_full$ENTREZID), ]
+
+```
+
+
+### Enriquecimiento funcional GO y KEGG
+```{r}
+# Leemos los resultados obtenidos en gprofiler a partir de los Entrez id generados previamente
+df <- read_excel("gprofiler_results.xlsx")
+df <- df %>%
+  mutate(
+    adjusted_p_value = as.numeric(adjusted_p_value),
+    negative_log10_of_adjusted_p_value = as.numeric(negative_log10_of_adjusted_p_value),
+    intersection_size = as.numeric(intersection_size)
+  )
+df <- df %>%
+  filter(term_id != "KEGG:00000")
+df_go <- df %>% filter(grepl("^GO", term_id))
+df_BP <- df %>% filter(source == "GO:BP")
+df_CC <- df %>% filter(source == "GO:CC")
+df_MF <- df %>% filter(source == "GO:MF")
+df_kegg <- df %>% filter(source == "KEGG")
+df_kegg
+```
+
+#### Enriqueciento GO
+```{r}
+plot_go <- function(data, title_text) {
+  
+  ggplot(data, aes(
+    x = -log10(adjusted_p_value),
+    y = reorder(term_name, adjusted_p_value)
+  )) +
+    geom_point(aes(size = intersection_size,
+                   color = -log10(adjusted_p_value))) +
+    scale_color_gradient(low = "blue", high = "red") +
+    labs(
+      x = "-log10(p ajustado)",
+      y = "Término GO",
+      title = title_text
+    ) +
+    theme_minimal()
+}
+plot_BP <- plot_go(df_BP,  "Enriquecimiento GO: Procesos biológicos")
+plot_CC <- plot_go(df_CC,  "Enriquecimiento GO: Componentes celulares")
+plot_MF <- plot_go(df_MF,  "Enriquecimiento GO: Funciones moleculares")
+plot_BP
+plot_CC
+plot_MF
+```
+
+#### Enriquecimiento KEGG
+```{r}
+ggplot(df_kegg,
+       aes(x = -log10(adjusted_p_value),
+           y = reorder(term_name, adjusted_p_value))) +
+
+  geom_point(aes(size = intersection_size,
+                 color = negative_log10_of_adjusted_p_value)) +
+
+  scale_color_gradient(low = "blue", high = "red") +
+
+  labs(
+    x = "-log10(p ajustado)",
+    y = "Ruta KEGG",
+    title = "Enriquecimiento de rutas KEGG"
+  ) +
+
+  theme_minimal()
+```
+
+
