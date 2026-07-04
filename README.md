@@ -19,7 +19,7 @@ El repositorio incluye el código empleado para:
 - Preprocesamiento y normalización de los datos.
 - Análisis de Componentes Principales (PCA).
 - _Clustering_ jerárquico.
-- Regresión logística penalizada (LASSO).
+- Entrenamiento y evaluación de modelos de regresión logística penalizada (LASSO).
 - Entrenamiento y evaluación de modelos Random Forest.
 - Entrenamiento y evaluación de modelos XGBoost.
 - Identificación de genes relevantes.
