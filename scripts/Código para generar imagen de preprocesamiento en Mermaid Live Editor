@@ -1,0 +1,21 @@
+flowchart TD
+
+A[Datos de expresión génica y variables clínicas]
+
+subgraph Preprocesamiento
+B[1. Integración de datos]
+C[2. Selección de variables y control de data leakage]
+D[3. Codificación de variables]
+E[4. Control de valores faltantes]
+F[5. Filtrado de variables constantes y con baja varianza]
+G[6. Transformación de expresión génica y escalado]
+
+B --> C
+C --> D
+D --> E
+E --> F
+F --> G
+end
+
+A --> B
+G --> H[Dataset final<br/>222 muestras · 16.496 variables]
