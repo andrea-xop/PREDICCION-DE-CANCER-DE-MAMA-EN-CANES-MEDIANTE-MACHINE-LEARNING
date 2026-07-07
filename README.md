@@ -26,7 +26,7 @@ El repositorio incluye el código empleado para:
 - Análisis de enriquecimiento funcional (Gene Ontology y KEGG).
 
 ## Estructura del repositorio
-- `scripts/`: código fuente en R y código de descarga inicial de datos de GEO.
+- `scripts/`: código fuente en R, código de descarga inicial de datos de GEO y código para generar imagen en Mermaid Live Editor.
 - `datos/`: archivos de datos empleados durante el análisis cuya obtención no está automatizada en los scripts.
 
 ## Reproducibilidad
